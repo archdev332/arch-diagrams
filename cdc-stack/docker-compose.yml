@@ -1,0 +1,247 @@
+# https://habr.com/ru/articles/779620/
+#https://docs.redpanda.com/current/get-started/quick-start/
+#https://docs.redpanda.com/redpanda-labs/docker-compose/single-broker/
+#https://docs.redpanda.com/23.3/get-started/quick-start/
+
+name: cdc-stack
+networks:
+  cdc_network:
+    driver: bridge
+services:
+  kafka:
+    image: confluentinc/cp-kafka:latest
+    container_name: KRaft
+    networks:
+      - cdc_network
+    ports:
+      - "9092:9092"
+      - "9093:9093"
+      - "19092:19092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: controller,broker
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:19092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:19092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: true
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      CLUSTER_ID: kraft-cluster-1
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    entrypoint: >
+      bash -c "
+      if [ ! -f /var/lib/kafka/data/meta.properties ]; then
+        echo 'Initializing Kafka KRaft...'
+        /usr/bin/kafka-storage format --cluster-id kraft-cluster-1 --config /etc/kafka/kraft/server.properties --ignore-formatted;
+      fi;
+      exec /etc/confluent/docker/run
+      "
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  kafka-connect:
+    image: confluentinc/cp-kafka-connect:latest
+    container_name: kafka-connect
+    networks:
+      - cdc_network
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8083:8083"
+    environment:
+      CONNECT_BOOTSTRAP_SERVERS: kafka:9092
+      CONNECT_GROUP_ID: debezium-connect
+      # топик для хранения конфигураций
+      CONNECT_CONFIG_STORAGE_TOPIC: _connect-configs
+      # топик для хранения оффсетов
+      CONNECT_OFFSET_STORAGE_TOPIC: _connect-offsets
+      # топик для хранения статусов коннектора
+      CONNECT_STATUS_STORAGE_TOPIC: _connect-status
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
+      # maybe org.apache.kafka.connect.storage.StringConverter
+      CONNECT_KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      # maybe io.confluent.connect.avro.AvroConverter
+      CONNECT_VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      CONNECT_REST_ADVERTISED_HOST_NAME: kafka-connect
+      CONNECT_PLUGIN_PATH: /usr/share/java,/usr/share/confluent-hub-components
+      # Error handling
+      CONNECT_ERRORS_TOLERANCE: "all"
+      CONNECT_ERRORS_LOG_ENABLE: "true"
+      CONNECT_ERRORS_LOG_INCLUDE_MESSAGES: "true"
+      # Producer configs
+      CONNECT_PRODUCER_COMPRESSION_TYPE: "lz4"
+      # Additional settings
+      CONNECT_TOPIC_CREATION_ENABLE: "true"
+      CONNECT_TOPIC_CREATION_DEFAULT_REPLICATION_FACTOR: 1
+      CONNECT_TOPIC_CREATION_DEFAULT_PARTITIONS: 1
+    volumes:
+      - kafka-connect-plugins:/usr/share/confluent-hub-components
+      - ./register-connector.sh:/register-connector.sh
+    command: >
+      bash -c "
+      if [ ! -d /usr/share/confluent-hub-components/debezium-connector-postgresql ]; then
+        echo 'Installing Debezium Connector...';
+        confluent-hub install --no-prompt debezium/debezium-connector-postgresql:latest;
+      fi;
+      
+      echo 'Starting Kafka Connect...';
+      /etc/confluent/docker/run &
+      
+      echo 'Waiting for Kafka Connect to start...';
+      until curl -s -f -o /dev/null http://localhost:8083/connectors; do
+        echo 'Kafka Connect not ready yet. Waiting...';
+        sleep 5;
+      done;
+      
+      echo 'Kafka Connect is ready. Registering the connector...';
+      bash /register-connector.sh;
+      
+      wait
+      "
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8083/connectors"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  schema-registry:
+    image: confluentinc/cp-schema-registry:latest
+    hostname: schema-registry
+    container_name: schema-registry
+    networks:
+      - cdc_network
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8081:8081"
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: kafka:9092
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+
+  redpanda-console:
+    image: docker.redpanda.com/redpandadata/console:latest
+    container_name: redpanda-console-kraft
+    networks:
+      - cdc_network
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-connect:
+        condition: service_healthy
+    ports:
+      - "8082:8080"
+    restart: unless-stopped
+    entrypoint: /bin/sh
+    command: -c "echo \"$$CONSOLE_CONFIG_FILE\" > /tmp/config.yml; /app/console"
+    environment:
+      CONFIG_FILEPATH: /tmp/config.yml
+      CONSOLE_CONFIG_FILE: |
+        kafka:
+          brokers: ["kafka:9092"]        
+          schemaRegistry:
+            enabled: true
+            urls: ["http://schema-registry:8081"]           
+        connect:
+          enabled: true
+          clusters:
+            - name: debezium-connect
+              url: http://kafka-connect:8083
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  postgres:
+    image: postgres:latest
+    container_name: postgres-cdc
+    restart: unless-stopped
+    networks:
+      - cdc_network
+    environment:
+      POSTGRES_DB: "mydb"
+      POSTGRES_USER: "postgres"
+      POSTGRES_PASSWORD: "password"
+      PGDATA: "/var/lib/postgresql/data/pgdata"
+      # Performance settings
+      POSTGRES_SHARED_BUFFERS: "256MB"
+      POSTGRES_EFFECTIVE_CACHE_SIZE: "1GB"
+      POSTGRES_WORK_MEM: "16MB"
+    command: >
+      -c wal_level=logical
+      -c max_wal_senders=1
+      -c max_replication_slots=1
+      -c shared_buffers=256MB
+      -c effective_cache_size=1GB
+      -c work_mem=16MB
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+      - ./init-db.sh:/docker-entrypoint-initdb.d/init-db.sh
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Add a service for local development
+#  adminer:
+#    image: adminer:latest
+#    container_name: adminer
+#    restart: unless-stopped
+#    depends_on:
+#      postgres:
+#        condition: service_healthy
+#    networks:
+#      - cdc_network
+#    ports:
+#      - "8888:8080"
+#    environment:
+#      ADMINER_DEFAULT_SERVER: postgres
+#      ADMINER_DESIGN: pepa-linha
+#    healthcheck:
+#      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080"]
+#      interval: 30s
+#      timeout: 10s
+#      retries: 3
+
+volumes:
+  dbdata:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./store/postgres
+  kafka-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./store/kafka
+  kafka-connect-plugins:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./store/kafka-connect
