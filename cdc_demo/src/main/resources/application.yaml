@@ -1,0 +1,32 @@
+spring:
+  application.name: cdc_demo
+  kafka:
+    bootstrap-servers: localhost:19092
+    consumer:
+      group-id: debezium-group
+      auto-offset-reset: latest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      max-poll-records: 100
+      max.poll.interval.ms: 300000
+
+    streams:
+      application-id: cdc-router
+      bootstrap-servers: localhost:19092
+      properties:
+        default.key.serde: org.apache.kafka.common.serialization.Serdes$StringSerde
+        default.value.serde: org.apache.kafka.common.serialization.Serdes$StringSerde
+        processing.guarantee: exactly_once_v2
+        num.stream.threads: 1 # Set the number of threads here, e.g. 4
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/mydb
+    username: postgres
+    password: password
+    driver-class-name: org.postgresql.Driver
+
+#  sql:
+#    init:
+#      mode: never
+#      schema-locations: classpath:db/schema.sql
+
