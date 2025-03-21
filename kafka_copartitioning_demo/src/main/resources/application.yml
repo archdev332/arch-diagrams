@@ -1,0 +1,48 @@
+spring:
+  application.name: kafka-copartitioning-demo
+
+  kafka:
+    bootstrap-servers: localhost:19092
+    consumer:
+      group-id: order-payment-processor-group
+      auto-offset-reset: latest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      max-poll-records: 50
+      properties:
+        max.poll.interval.ms: 100000
+
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      acks: 1
+      retries: 2
+      compression-type: lz4
+
+    streams:
+      application-id: order-payment-processor
+      bootstrap-servers: localhost:19092
+      properties:
+        default.key.serde: org.apache.kafka.common.serialization.Serdes$StringSerde
+        default.value.serde: org.springframework.kafka.support.serializer.JsonSerde
+        default.timestamp.extractor: org.apache.kafka.streams.processor.WallclockTimestampExtractor
+
+      ## In production, this could be dangerous unless you're doing stateless or restart-safe computation
+      cleanup:
+        # Cleans up the local state store when the application shuts down. Good for avoiding stale state on dev/test cycles
+        on-shutdown: true
+        # Clears previous local state stores before starting the Kafka Streams application. Ensures a clean start with fresh state (e.g., if you're reprocessing data for testing/debugging)
+        on-startup: true
+
+    listener:
+      concurrency: 3
+      log-container-config: off
+
+# Topic configurations
+kafka:
+  topics:
+    partition-count: 6
+    replication-factor: 1
+    orders: orders
+    payments: payments
+    order-payment-status: order-payment-status
