@@ -23,6 +23,7 @@ spring:
       application-id: order-payment-processor
       bootstrap-servers: localhost:19092
       properties:
+        commit.interval.ms: 5000
         default.key.serde: org.apache.kafka.common.serialization.Serdes$StringSerde
         default.value.serde: org.springframework.kafka.support.serializer.JsonSerde
         default.timestamp.extractor: org.apache.kafka.streams.processor.WallclockTimestampExtractor
@@ -33,6 +34,8 @@ spring:
         on-shutdown: true
         # Clears previous local state stores before starting the Kafka Streams application. Ensures a clean start with fresh state (e.g., if you're reprocessing data for testing/debugging)
         on-startup: true
+#      state-dir: /Users/li20/test1/kafka_copartitioning_demo
+
 
     listener:
       concurrency: 3
@@ -46,3 +49,9 @@ kafka:
     orders: orders
     payments: payments
     order-payment-status: order-payment-status
+
+
+feature:
+  kafka-streams:
+    joined-streams: false
+    ktable-aggregation: true

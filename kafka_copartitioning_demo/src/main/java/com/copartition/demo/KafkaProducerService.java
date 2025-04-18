@@ -2,22 +2,30 @@ package com.copartition.demo;
 
 import com.copartition.demo.domain.Order;
 import com.copartition.demo.domain.Payment;
-import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 
 @Service
-@RequiredArgsConstructor
 public class KafkaProducerService {
 
   private final KafkaTemplate<String, Order> orderKafkaTemplate;
   private final KafkaTemplate<String, Payment> paymentKafkaTemplate;
 
-  @Value("${kafka.topics.orders}")
+
   private final String ordersTopic;
-  @Value("${kafka.topics.payments}")
+
   private final String paymentsTopic;
+
+  public KafkaProducerService(KafkaTemplate<String, Order> orderKafkaTemplate,
+                              KafkaTemplate<String, Payment> paymentKafkaTemplate,
+                              @Value("${kafka.topics.orders}") String ordersTopic,
+                              @Value("${kafka.topics.payments}") String paymentsTopic) {
+    this.orderKafkaTemplate = orderKafkaTemplate;
+    this.paymentKafkaTemplate = paymentKafkaTemplate;
+    this.ordersTopic = ordersTopic;
+    this.paymentsTopic = paymentsTopic;
+  }
 
   /**
    * Produces an order event to the orders topic.

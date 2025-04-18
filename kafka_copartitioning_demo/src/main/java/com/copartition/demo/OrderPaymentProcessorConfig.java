@@ -4,8 +4,6 @@ import com.copartition.demo.domain.Order;
 import com.copartition.demo.domain.OrderPaymentStatus;
 import com.copartition.demo.domain.OrderStatus;
 import com.copartition.demo.domain.Payment;
-import java.time.Duration;
-import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.common.serialization.Serde;
 import org.apache.kafka.common.serialization.Serdes;
 import org.apache.kafka.streams.StreamsBuilder;
@@ -14,17 +12,23 @@ import org.apache.kafka.streams.kstream.JoinWindows;
 import org.apache.kafka.streams.kstream.KStream;
 import org.apache.kafka.streams.kstream.Produced;
 import org.apache.kafka.streams.kstream.StreamJoined;
+import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.kafka.annotation.EnableKafkaStreams;
 import org.springframework.kafka.support.serializer.JsonSerde;
 
+import java.time.Duration;
+
 @Configuration
-@EnableKafkaStreams
-@Slf4j
+@ConditionalOnProperty(
+        name = "feature.kafka-streams.joined-streams",
+        havingValue = "true"
+)
 public class OrderPaymentProcessorConfig {
 
+  private static final Logger log = org.slf4j.LoggerFactory.getLogger(OrderPaymentProcessorConfig.class);
   // Define SerDes for our data types
   private final Serde<String> stringSerde = Serdes.String();
   private final JsonSerde<Order> orderSerde = new JsonSerde<>(Order.class);
